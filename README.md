@@ -2,6 +2,8 @@
 
 Create and export customizable low poly 3D rocks and cliffs in your browser.
 
+![Low poly rock cluster in the Meadow scene](screenshots/preview.jpg)
+
 **Live generator:** https://3d.mediageni.com/low-poly-rock-generator/
 
 Run locally with a static web server from this directory, then open its local URL in a browser. For example:
