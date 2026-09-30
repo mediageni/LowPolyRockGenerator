@@ -104,25 +104,7 @@ export function addRockDetails(root, p, mats) {
     }
     if (geo !== node.geometry) geo.dispose();
   });
-  if (p.mossOn) {
-    const group = part(root, "Moss"),
-      positions = [];
-    for (const { points, normal } of surfaces)
-      if (r() < 0.28)
-        for (const point of points) {
-          const padded = point.clone().addScaledVector(normal, p.size * 0.006);
-          positions.push(...padded.toArray());
-        }
-    if (positions.length) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(positions, 3),
-      );
-      geo.computeVertexNormals();
-      mesh(group, geo, mats.moss);
-    }
-  }
+  if (p.mossOn) paintMoss(root, p, mats);
   if (p.quartzOn && surfaces.length) {
     const group = part(root, "Quartz");
     for (let i = 0; i < Math.min(12, surfaces.length); i++) {
@@ -167,5 +149,85 @@ export function addRockDetails(root, p, mats) {
       12,
     );
     disc.receiveShadow = true;
+  }
+}
+
+// Paint a continuous, subdued moss field into the stone itself. Subdivision is
+// planar: it does not change the rock silhouette or add raised green polygons.
+function paintMoss(root, p, mats) {
+  const stones = [];
+  root.traverse((node) => {
+    if (node.isMesh) stones.push(node);
+  });
+  const tint = mats.rock.color.clone().lerp(mats.moss.color, 0.56);
+  const material = mats.rock.clone();
+  material.name = "moss-stone";
+  material.color.set(0xffffff);
+  material.vertexColors = true;
+  const phase = (p.seed % 8191) * 0.37,
+    scale = 2.8 / Math.max(0.1, p.size);
+  const field = (point) => {
+    const x = point.x * scale,
+      y = point.y * scale,
+      z = point.z * scale;
+    return (
+      (Math.sin(x * 1.1 + z * 0.9 + phase) +
+        Math.cos(z * 1.6 - y * 0.7 + phase * 0.71) +
+        0.35 * Math.sin(x * 4.2 + z * 3.7)) /
+      2.35
+    );
+  };
+  for (const stone of stones) {
+    const source = stone.geometry.index
+      ? stone.geometry.toNonIndexed()
+      : stone.geometry;
+    const attr = source.getAttribute("position"),
+      positions = [],
+      colors = [];
+    const n = new THREE.Vector3(),
+      world = new THREE.Vector3();
+    function triangle(a, b, c, depth) {
+      if (depth) {
+        const ab = a.clone().lerp(b, 0.5),
+          bc = b.clone().lerp(c, 0.5),
+          ca = c.clone().lerp(a, 0.5);
+        for (const points of [
+          [a, ab, ca],
+          [ab, b, bc],
+          [ca, bc, c],
+          [ab, bc, ca],
+        ])
+          triangle(...points, depth - 1);
+        return;
+      }
+      n.copy(b).sub(a).cross(c.clone().sub(a)).normalize();
+      n.transformDirection(stone.matrixWorld);
+      const exposure = THREE.MathUtils.smoothstep(n.y, 0.15, 0.75);
+      for (const point of [a, b, c]) {
+        positions.push(...point.toArray());
+        world.copy(point).applyMatrix4(stone.matrixWorld);
+        const amount =
+          exposure * THREE.MathUtils.smoothstep(field(world), 0.04, 0.58);
+        colors.push(...mats.rock.color.clone().lerp(tint, amount).toArray());
+      }
+    }
+    for (let i = 0; i < attr.count; i += 3)
+      triangle(
+        ...[0, 1, 2].map((j) =>
+          new THREE.Vector3().fromBufferAttribute(attr, i + j),
+        ),
+        2,
+      );
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    if (source !== stone.geometry) source.dispose();
+    stone.geometry.dispose();
+    stone.geometry = geometry;
+    stone.material = material;
   }
 }
