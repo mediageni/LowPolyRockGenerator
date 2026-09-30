@@ -5,6 +5,8 @@
 // boulders, clusters, cairns, cliffs and pebble fields. Deterministic from seed.
 
 import * as THREE from "three";
+import { TessellateModifier } from "three/addons/TessellateModifier.js";
+import { shapeFinish } from "@engine/finish.js";
 import { makeRng } from "@engine/rng.js";
 import { addRockDetails, sculptStone } from "./details.js";
 import { detailed } from "@engine/options.js";
@@ -26,7 +28,7 @@ function makeStone(
   { radius, detail, jagged, squashY, elong, seedf, params },
 ) {
   const basalt = detailed(params) && params.surface === "basalt";
-  const geo = basalt
+  let geo = basalt
     ? new THREE.CylinderGeometry(radius * 0.78, radius, radius * 2, 6, 3)
     : new THREE.IcosahedronGeometry(radius, detail);
   const p = geo.attributes.position;
@@ -41,6 +43,13 @@ function makeStone(
   geo.scale(elong, squashY, 1 / Math.sqrt(elong)); // ellipsoid footprint
   sculptStone(geo, params);
   geo.computeVertexNormals();
+  if (shapeFinish() !== "angular") {
+    // Add facets on the existing stone, preserving its seeded vertices and
+    // footprint. Sampling new noisy sphere vertices would create another rock.
+    const refined = new TessellateModifier(radius * 0.3, 1).modify(geo);
+    geo.dispose();
+    geo = refined;
+  }
   geo.computeBoundingBox();
   const m = new THREE.Mesh(geo, mat);
   m.position.y = -geo.boundingBox.min.y; // rest its lowest point on y=0
