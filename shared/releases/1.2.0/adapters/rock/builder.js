@@ -6,6 +6,9 @@
 
 import * as THREE from "three";
 import { makeRng } from "@engine/rng.js";
+import { addRockDetails, sculptStone } from "./details.js";
+import { detailed } from "@engine/options.js";
+import { part } from "@engine/geometry.js";
 
 // value-ish noise on a unit direction — identical for identical positions, so the
 // duplicated corner vertices of a flat-shaded polyhedron displace in lockstep.
@@ -18,8 +21,14 @@ function dirNoise(x, y, z, s) {
 
 // Build one grounded stone: a displaced icosahedron, squashed + elongated, with
 // its lowest point resting on y=0 (the caller can then sink/move it).
-function makeStone(mat, { radius, detail, jagged, squashY, elong, seedf }) {
-  const geo = new THREE.IcosahedronGeometry(radius, detail);
+function makeStone(
+  mat,
+  { radius, detail, jagged, squashY, elong, seedf, params },
+) {
+  const basalt = detailed(params) && params.surface === "basalt";
+  const geo = basalt
+    ? new THREE.CylinderGeometry(radius * 0.78, radius, radius * 2, 6, 3)
+    : new THREE.IcosahedronGeometry(radius, detail);
   const p = geo.attributes.position;
   const t = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
@@ -30,6 +39,7 @@ function makeStone(mat, { radius, detail, jagged, squashY, elong, seedf }) {
     p.setXYZ(i, t.x, t.y, t.z);
   }
   geo.scale(elong, squashY, 1 / Math.sqrt(elong)); // ellipsoid footprint
+  sculptStone(geo, params);
   geo.computeVertexNormals();
   geo.computeBoundingBox();
   const m = new THREE.Mesh(geo, mat);
@@ -54,6 +64,7 @@ function buildSingle(g, p, mat, r) {
         squashY: p.squashY,
         elong: p.elong,
         seedf: p.seed % 1000,
+        params: p,
       }),
       r,
     ),
@@ -72,6 +83,7 @@ function buildCluster(g, p, mat, r) {
       squashY: p.squashY * (0.85 + 0.3 * r()),
       elong: p.elong * (0.85 + 0.3 * r()),
       seedf: (p.seed + i * 131) % 1000,
+      params: p,
     });
     const a = (i / n) * Math.PI * 2 + r() * 1.4,
       rr = i === 0 ? 0 : p.size * (0.7 + 0.6 * r());
@@ -95,6 +107,7 @@ function buildStack(g, p, mat, r) {
       squashY: 0.42 + 0.12 * r(),
       elong: p.elong * (1.0 + 0.25 * r()),
       seedf: (p.seed + i * 257) % 1000,
+      params: p,
     });
     const h = s.geometry.boundingBox.max.y - s.geometry.boundingBox.min.y;
     s.position.y = y - s.geometry.boundingBox.min.y;
@@ -116,6 +129,7 @@ function buildCliff(g, p, mat, r) {
         squashY: p.squashY,
         elong: p.elong,
         seedf: p.seed % 1000,
+        params: p,
       }),
       r,
     ),
@@ -129,6 +143,7 @@ function buildCliff(g, p, mat, r) {
       squashY: 0.7 + 0.3 * r(),
       elong: 1 + 0.4 * r(),
       seedf: (p.seed + i * 71 + 9) % 1000,
+      params: p,
     });
     const a = r() * Math.PI * 2,
       rr = p.size * (0.7 + 0.5 * r());
@@ -149,6 +164,7 @@ function buildPebbles(g, p, mat, r) {
       squashY: 0.32 + 0.16 * r(),
       elong: 1 + 0.6 * r(),
       seedf: (p.seed + i * 53) % 1000,
+      params: p,
     });
     const a = r() * Math.PI * 2,
       rr = p.size * (0.3 + 3.4 * Math.sqrt(r()));
@@ -172,6 +188,38 @@ export function buildRock(p, mats) {
   g.name = "rock";
   const r = makeRng((p.seed ^ 0x5eed7a11) >>> 0);
   (FORMS[p.form] || buildSingle)(g, p, mats.rock, r);
+  if (detailed(p)) {
+    if (p.form === "cliff") {
+      const rubble = part(g, "Rubble");
+      for (const stone of [...g.children].slice(1))
+        if (stone !== rubble) {
+          if (p.rubbleOn) rubble.add(stone);
+          else {
+            g.remove(stone);
+            stone.geometry.dispose();
+          }
+        }
+    } else if (p.rubbleOn && p.form !== "pebbles") {
+      const rubble = part(g, "Rubble"),
+        rr = makeRng(p.seed ^ 0x58b016c3);
+      for (let i = 0; i < 5; i++) {
+        const a = rr() * Math.PI * 2,
+          s = makeStone(mats.rock, {
+            radius: p.size * (0.1 + rr() * 0.1),
+            detail: 1,
+            jagged: p.jagged,
+            squashY: 0.55,
+            elong: 1.2,
+            seedf: p.seed + i,
+            params: { ...p, surface: "natural" },
+          });
+        s.position.x = Math.cos(a) * p.size * (1.1 + rr() * 0.45);
+        s.position.z = Math.sin(a) * p.size * (1.1 + rr() * 0.45);
+        rubble.add(s);
+      }
+    }
+    addRockDetails(g, p, mats);
+  }
 
   // sink the whole thing slightly so nothing looks like it floats
   let box = new THREE.Box3().setFromObject(g);
